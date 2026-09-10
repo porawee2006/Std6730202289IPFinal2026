@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import AddProductScreen from './add';
 import EditProductScreen from './edit';
+import DashboardScreen from './dashboard';
 import { useAuth } from './AuthContext';
 
 const { width } = Dimensions.get('window');
@@ -154,8 +155,10 @@ export default function ProductsScreen() {
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor="#0F172A" />
 
-      {/* สลับสลับหน้าจอ (Add/Edit vs Product List) */}
-      {activeTab === 'Add' ? (
+      {/* สลับสลับหน้าจอ (Add/Edit/Dashboard vs Product List) */}
+      {activeTab === 'Dashboard' ? (
+        <DashboardScreen onBack={() => setActiveTab('Products')} />
+      ) : activeTab === 'Add' ? (
         <AddProductScreen 
           onSuccess={() => { setActiveTab('Products'); loadProducts(); }} 
           onCancel={() => setActiveTab('Products')} 
@@ -180,10 +183,27 @@ export default function ProductsScreen() {
               </View>
             </View>
 
-            {/* 🚪 ปุ่ม Logout */}
-            <TouchableOpacity style={styles.logoutButton} onPress={logout}>
-              <Text style={styles.logoutIconText}>🚪</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {/* 📊 ปุ่มเปิด Dashboard */}
+              <TouchableOpacity
+                style={{
+                  backgroundColor: '#3B82F6',
+                  paddingHorizontal: 12,
+                  paddingVertical: 8,
+                  borderRadius: 8,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                }}
+                onPress={() => setActiveTab('Dashboard')}
+              >
+                <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 13 }}>📊 Dashboard</Text>
+              </TouchableOpacity>
+
+              {/* 🚪 ปุ่ม Logout */}
+              <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+                <Text style={styles.logoutIconText}>🚪</Text>
+              </TouchableOpacity>
+            </View>
           </View>
 
           {/* 🖥️ [FRONTEND] 4. SEARCH BAR & 6. FILTER & SORT CONTROLS */}

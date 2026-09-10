@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, ScrollView } from 'react-native';
 import { useAuth } from './AuthContext';
+import { API_BASE_URL } from '../constants/api';
 
 export type EditableProduct = {
   id?: number | string;
@@ -64,8 +65,8 @@ export default function AddProductScreen({
     try {
       setIsLoading(true);
       const url = isEditMode 
-        ? `http://119.59.102.161:3028/api/products/${product.id}`
-        : 'http://119.59.102.161:3028/api/products';
+        ? `${API_BASE_URL}/products/${product.id}`
+        : `${API_BASE_URL}/products`;
       
       const response = await fetch(url, {
         method: isEditMode ? 'PUT' : 'POST',
