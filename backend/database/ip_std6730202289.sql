@@ -104,6 +104,37 @@ ALTER TABLE `powerbanks`
 --
 ALTER TABLE `users`
   MODIFY `id` int NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `employees`
+--
+
+CREATE TABLE IF NOT EXISTS `employees` (
+  `id` varchar(50) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `name` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `position` varchar(255) COLLATE utf8mb4_unicode_ci NOT NULL,
+  `status` enum('Active','On Leave') COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'Active',
+  `salary` decimal(10,2) NOT NULL,
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+--
+-- Dumping data for table `employees`
+--
+
+INSERT INTO `employees` (`id`, `name`, `position`, `status`, `salary`) VALUES
+('1', 'John Doe', 'Software Engineer', 'Active', 45000.00),
+('2', 'Jane Smith', 'HR Manager', 'Active', 65000.00),
+('3', 'Somchai Jaidee', 'Marketing Specialist', 'On Leave', 32000.00),
+('4', 'Alice Johnson', 'Senior DevOps Engineer', 'Active', 85000.00),
+('5', 'Bob Lee', 'Junior Frontend Developer', 'Active', 28000.00),
+('6', 'Siriporn Wang', 'Data Analyst', 'Active', 42000.00)
+ON DUPLICATE KEY UPDATE `name`=VALUES(`name`);
+
 COMMIT;
 
 /*!40101 SET CHARACTER_SET_CLIENT=@OLD_CHARACTER_SET_CLIENT */;

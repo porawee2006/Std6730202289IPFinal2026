@@ -1,554 +1,578 @@
-// ดึงค่าการตั้งค่าจากไฟล์ .env มาใช้งาน
-require('dotenv').config();
-// นำเข้า Express Framework สำหรับสร้าง Web Server
-const express = require('express');
-// นำเข้า CORS อนุญาตให้แอป React Native เรียกใช้ API ได้
-const cors = require('cors');
-// นำเข้าตัวเชื่อมต่อ MySQL แบบ Promise
-const mysql = require('mysql2/promise');
-// นำเข้า bcrypt สำหรับเข้ารหัสรหัสผ่านให้ปลอดภัย
-const bcrypt = require('bcrypt');
-// นำเข้า jsonwebtoken สำหรับออก Token ล็อกอิน
-const jwt = require('jsonwebtoken');
+// ==============================================================================
+// 🌟 HR Manager & Salary Analytics System - Backend (Express.js)
+// Final Exam: Internet Programming (2026)
+// Student ID: 6730202289
+// ==============================================================================
 
-// สร้างอินสแตนซ์ของ Express App
+require('dotenv').config();
+const express = require('express');
+const cors = require('cors');
+const mysql = require('mysql2/promise');
+
 const app = express();
-// กำหนดพอร์ตในการรัน Server (เริ่มต้น 3028)
 const port = process.env.PORT || 3028;
 
-// เปิดใช้งาน CORS
+// Middleware
 app.use(cors());
-// อนุญาตให้รับข้อมูลแบบ JSON ขนาดไม่เกิน 5MB
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json());
 
-// ==========================================
-// 🔌 1. จุดเชื่อมต่อไปยัง MySQL (phpMyAdmin)
-// ==========================================
-// ตรงนี้เป็นจุดที่เอาไว้ใส่ Host, Username, Password และชื่อ Database เพื่อเชื่อมต่อไป phpMyAdmin ครับ
-const pool = mysql.createPool({
-  host: process.env.DB_HOST,
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  port: process.env.DB_PORT || 3306,
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-  timezone: "+07:00"
-});
+// ==============================================================================
+// 📦 1. Data Storage: In-Memory Array (Primary Spec) + MySQL Hybrid Auto-Sync
+// ==============================================================================
 
-(async function testMySQL() {
+// Initial mock employees (At least 5 records as required by Phase 1 spec)
+let mockEmployees = [
+  { id: "1", name: "John Doe", position: "Software Engineer", status: "Active", salary: 45000 },
+  { id: "2", name: "Jane Smith", position: "HR Manager", status: "Active", salary: 65000 },
+  { id: "3", name: "Somchai Jaidee", position: "Marketing Specialist", status: "On Leave", salary: 32000 },
+  { id: "4", name: "Alice Johnson", position: "Senior DevOps Engineer", status: "Active", salary: 85000 },
+  { id: "5", name: "Bob Lee", position: "Junior Frontend Developer", status: "Active", salary: 28000 },
+  { id: "6", name: "Siriporn Wang", position: "Data Analyst", status: "Active", salary: 42000 }
+];
+
+let isDbConnected = false;
+let pool = null;
+
+// Graceful MySQL connection initialization (non-blocking fallback to in-memory)
+(async function initDatabase() {
   try {
-    const conn = await pool.getConnection();
-    console.log('Connected to MySQL:', process.env.DB_NAME);
+    pool = mysql.createPool({
+      host: process.env.DB_HOST || 'localhost',
+      user: process.env.DB_USER || 'std6730202289',
+      password: process.env.DB_PASSWORD ? String(process.env.DB_PASSWORD).replace(/^"|"$/g, '') : '',
+      database: process.env.DB_NAME || 'ip_std6730202289',
+      port: Number(process.env.DB_PORT) || 3306,
+      waitForConnections: true,
+      connectionLimit: 5,
+      queueLimit: 0,
+      connectTimeout: 4000
+    });
 
-    // Create users table if not exists
+    const conn = await pool.getConnection();
+    console.log(`✅ [MySQL Connected] Database: ${process.env.DB_NAME}`);
+
+    // Create table employees if not exists
     await conn.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL,
-        role ENUM('admin', 'user') DEFAULT 'user',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      CREATE TABLE IF NOT EXISTS employees (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        position VARCHAR(255) NOT NULL,
+        status ENUM('Active', 'On Leave') NOT NULL DEFAULT 'Active',
+        salary DECIMAL(10,2) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
       )
     `);
 
-    // Seed admin if not exists
-    const [adminRows] = await conn.query('SELECT * FROM users WHERE username = ?', ['Admin']);
-    if (adminRows.length === 0) {
-      const hashedPass = await bcrypt.hash('123456', 10);
-      await conn.query('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', ['Admin', hashedPass, 'admin']);
-      console.log('Admin user seeded.');
-    }
-
-    // Ensure powerbanks columns exist
-    const columnsToAdd = [
-      'ADD COLUMN capacity INT DEFAULT 0',
-      'ADD COLUMN price DECIMAL(10,2) DEFAULT 0',
-      'ADD COLUMN location VARCHAR(255)',
-      'ADD COLUMN category VARCHAR(255)',
-      'ADD COLUMN brand VARCHAR(255)',
-      'ADD COLUMN status VARCHAR(50) DEFAULT "Active"',
-      'ADD COLUMN image TEXT',
-      'ADD COLUMN lastUpdate TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
-    ];
-    for (const col of columnsToAdd) {
-      try {
-        await conn.query(`ALTER TABLE powerbanks ${col}`);
-      } catch (err) {
-        // Column likely already exists, ignore
+    // Check if table has data, otherwise seed initial mock data
+    const [rows] = await conn.query('SELECT COUNT(*) as count FROM employees');
+    if (rows[0].count === 0) {
+      for (const emp of mockEmployees) {
+        await conn.query(
+          'INSERT INTO employees (id, name, position, status, salary) VALUES (?, ?, ?, ?, ?)',
+          [emp.id, emp.name, emp.position, emp.status, emp.salary]
+        );
+      }
+      console.log('🌱 Seeded initial 6 mock employees to MySQL database');
+    } else {
+      // Sync in-memory array with database records
+      const [dbRows] = await conn.query('SELECT id, name, position, status, CAST(salary AS SIGNED) as salary FROM employees');
+      if (dbRows.length > 0) {
+        mockEmployees = dbRows.map(r => ({
+          id: String(r.id),
+          name: r.name,
+          position: r.position,
+          status: r.status,
+          salary: Number(r.salary)
+        }));
       }
     }
 
     conn.release();
+    isDbConnected = true;
+    console.log('✨ [Hybrid Storage] Synchronized with MySQL database.');
   } catch (err) {
-    console.error('MySQL Failed:', err.message);
-    process.exit(1);
+    isDbConnected = false;
+    console.warn(`⚠️ [Storage Notice] MySQL is unavailable (${err.message}).`);
+    console.log('🚀 Running seamlessly in IN-MEMORY STORAGE MODE per exam specification.');
   }
 })();
 
-// คีย์ลับสำหรับเซ็นต์สร้าง JWT Token
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback_secret_key_123';
+// Helper to get all current employees
+async function getAllEmployees() {
+  if (isDbConnected && pool) {
+    try {
+      const [rows] = await pool.query('SELECT id, name, position, status, CAST(salary AS SIGNED) as salary FROM employees ORDER BY id ASC');
+      return rows.map(r => ({
+        id: String(r.id),
+        name: r.name,
+        position: r.position,
+        status: r.status,
+        salary: Number(r.salary)
+      }));
+    } catch (e) {
+      console.error('Error reading from DB, falling back to memory:', e.message);
+    }
+  }
+  return [...mockEmployees];
+}
 
-// 🛡️ Middleware ตรวจสอบว่าผู้ใช้ส่ง Token ล็อกอินเข้ามาหรือยัง
-function requireAuth(req, res, next) {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // ดึงคำว่า Bearer <Token>
-  if (!token) return res.status(401).json({ error: 'Access Token Required' });
+// ==============================================================================
+// 🛠️ Phase 1.1: Authentication (Login) Endpoint
+// ==============================================================================
+/**
+ * [POST] /api/login (and /api/auth/login)
+ * Accept username and password in request body.
+ * If credentials are admin and password123, respond 200 OK with:
+ * {"success": true, "token": "mock-jwt-token"}
+ * If incorrect, respond 401 Unauthorized with error message.
+ */
+function handleLogin(req, res) {
+  const { username, password } = req.body || {};
 
-  // ยืนยันความถูกต้องของ Token
-  jwt.verify(token, JWT_SECRET, (err, user) => {
-    if (err) return res.status(403).json({ error: 'Invalid Token' });
-    req.user = user;
-    next();
+  if (!username || !password) {
+    return res.status(400).json({
+      success: false,
+      error: 'Username and password are required'
+    });
+  }
+
+  // Exact credentials required by Exam spec
+  if (username === 'admin' && password === 'password123') {
+    return res.status(200).json({
+      success: true,
+      token: 'mock-jwt-token',
+      user: {
+        id: '1',
+        username: 'admin',
+        role: 'admin',
+        name: 'System Administrator'
+      }
+    });
+  }
+
+  return res.status(401).json({
+    success: false,
+    error: 'Invalid credentials. Please check your username and password.'
   });
 }
 
-// 👑 Middleware ตรวจสอบว่าผู้ใช้มีสิทธิ์เป็น Admin หรือไม่
-function requireAdmin(req, res, next) {
-  requireAuth(req, res, () => {
-    if (req.user && req.user.role === 'admin') {
-      next(); // สิทธิ์ผ่าน อนุญาตให้รันคำสั่งถัดไป
-    } else {
-      res.status(403).json({ error: 'Admin Access Required' }); // ไม่ใช่ Admin ไม่อนุญาต!
-    }
-  });
-}
+app.post('/api/login', handleLogin);
+app.post('/api/auth/login', handleLogin); // Backward-compatibility alias
 
-// ==========================================
-// ⚙️ [BACKEND] 5. ระบบ LOGIN & REGISTER (เข้าสู่ระบบ / สมัครสมาชิก)
-// ==========================================
+// ==============================================================================
+// 🛠️ Phase 1.1: CRUD API Endpoints for Employees
+// ==============================================================================
 
-// ⚙️ [BACKEND] 5.1 ระบบสมัครสมาชิกสำหรับลูกค้า (Register)
-app.post('/api/auth/register', async (req, res) => {
+/**
+ * [GET] /api/employees
+ * Return all employee records.
+ * Supports optional search query (?q=... or ?search=...)
+ */
+app.get('/api/employees', async (req, res) => {
   try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
+    const list = await getAllEmployees();
+    const q = (req.query.q || req.query.search || '').toString().trim().toLowerCase();
 
-    if (username.toLowerCase() === 'admin') {
-      return res.status(400).json({ error: 'Cannot register as admin' });
-    }
-
-    const hashedPass = await bcrypt.hash(password, 10);
-    const [result] = await pool.query('INSERT INTO users (username, password, role) VALUES (?, ?, ?)', [username, hashedPass, 'user']);
-    res.status(201).json({ success: true, userId: result.insertId });
-  } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(400).json({ error: 'Username already exists' });
-    console.error('Register error:', err);
-    res.status(500).json({ error: 'Failed to register' });
-  }
-});
-
-// ⚙️ [BACKEND] 5.2 ระบบเข้าสู่ระบบ (Login) ทั้ง Admin และ Customer
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { username, password } = req.body;
-    if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-
-    const [rows] = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
-    const user = rows[0];
-
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const token = jwt.sign({ id: user.id, username: user.username, role: user.role }, JWT_SECRET, { expiresIn: '12h' });
-    res.json({ token, user: { id: user.id, username: user.username, role: user.role } });
-  } catch (err) {
-    console.error('Login error:', err);
-    res.status(500).json({ error: 'Failed to login' });
-  }
-});
-
-// ==========================================
-// ⚙️ [BACKEND] 4. ระบบค้นหา (SEARCH) & 6. ระบบกรองและเรียงลำดับราคา (FILTER & SORT)
-// ==========================================
-app.get('/api/products', async (req, res) => {
-  try {
-    const { q, minPrice, maxPrice, sort } = req.query;
-    let query = 'SELECT * FROM powerbanks WHERE 1=1';
-    let params = [];
-
-    // ค้นหาตามชื่อสินค้าหรือแบรนด์
     if (q) {
-      query += ' AND (name LIKE ? OR brand LIKE ?)';
-      params.push(`%${q}%`, `%${q}%`);
-    }
-
-    // กรองตามราคาน้อยที่สุด (Min Price)
-    if (minPrice && !isNaN(minPrice)) {
-      query += ' AND price >= ?';
-      params.push(parseFloat(minPrice));
-    }
-
-    // กรองตามราคามากที่สุด (Max Price)
-    if (maxPrice && !isNaN(maxPrice)) {
-      query += ' AND price <= ?';
-      params.push(parseFloat(maxPrice));
-    }
-
-    // เรียงลำดับราคา (Price Low->High, High->Low, Newest)
-    if (sort === 'price_asc') {
-      query += ' ORDER BY price ASC';
-    } else if (sort === 'price_desc') {
-      query += ' ORDER BY price DESC';
-    } else {
-      query += ' ORDER BY lastUpdate DESC';
-    }
-
-    try {
-      const [rows] = await pool.query(query, params);
-      res.json(rows);
-    } catch (e) {
-      // Fallback สำหรับตารางที่ไม่มีคอลัมน์ lastUpdate
-      query = query.replace(' ORDER BY lastUpdate DESC', '');
-      const [rows2] = await pool.query(query, params);
-      res.json(rows2);
-    }
-  } catch (e) {
-    console.error('Products Error:', e.message);
-    res.status(500).json({ error: 'Failed to fetch products' });
-  }
-});
-
-// ==========================================
-// ⚙️ [BACKEND] 1. ระบบเพิ่มสินค้า (ADD PRODUCT - เฉพาะ Admin)
-// ==========================================
-app.post('/api/products', requireAdmin, async (req, res) => {
-  try {
-    const body = req.body || {};
-    const { name, brand = null, capacity = null, price = 0, stock = 0, image = null, category = null, location = null, status = 'Active' } = body;
-
-    if (!name) return res.status(400).json({ error: 'Name is required' });
-
-    try {
-      // First try the schema from the presentation
-      const [rs] = await pool.query(
-        `INSERT INTO powerbanks (name, stock, category, location, image, status, brand, capacity, price, lastUpdate) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
-        [name, stock || 0, category || null, location || null, image || null, status || 'Active', brand || null, capacity, price]
+      const filtered = list.filter(emp =>
+        emp.name.toLowerCase().includes(q) ||
+        emp.position.toLowerCase().includes(q) ||
+        emp.status.toLowerCase().includes(q)
       );
-      return res.status(201).json({ success: true, productId: rs.insertId });
-    } catch (e) {
-      // Fallback to powerbanks schema derived from index.tsx
-      const [rs2] = await pool.query(
-        `INSERT INTO powerbanks (name, brand, capacity, price, stock, image) VALUES (?, ?, ?, ?, ?, ?)`,
-        [name, brand, capacity, price, stock, image]
-      );
-      return res.status(201).json({ success: true, productId: rs2.insertId });
+      return res.status(200).json(filtered);
     }
+
+    return res.status(200).json(list);
   } catch (err) {
-    console.error('Create Product Error:', err);
-    res.status(500).json({ error: 'Failed to create product: ' + err.message });
+    console.error('Get employees error:', err);
+    return res.status(500).json({ error: 'Failed to retrieve employee records' });
   }
 });
 
-// ==========================================
-// ⚙️ [BACKEND] 3. ระบบแก้ไขสินค้า (EDIT PRODUCT - เฉพาะ Admin)
-// ==========================================
-app.put('/api/products/:id', requireAdmin, async (req, res) => {
+/**
+ * [POST] /api/employees
+ * Add a new employee.
+ * Must receive name, position, and salary.
+ * If any field is empty, respond with Status 400 Bad Request.
+ */
+app.post('/api/employees', async (req, res) => {
   try {
-    const { id } = req.params;
-    const body = req.body || {};
-    const { name, brand = null, capacity = null, price = 0, stock = 0, image = null, category = null, location = null, status = 'Active' } = body;
+    const { name, position, salary, status } = req.body || {};
 
-    if (!name) return res.status(400).json({ error: 'Missing name' });
-
-    try {
-      const [result] = await pool.query(
-        `UPDATE powerbanks SET name = ?, stock = ?, category = ?, location = ?, status = ?, image = ?, brand = ?, capacity = ?, price = ?, lastUpdate = NOW() WHERE id = ?`,
-        [name, stock || 0, category, location, status, image, brand, capacity, price, id]
-      );
-      if (result.affectedRows === 0) return res.status(404).json({ error: 'Product not found' });
-      return res.json({ success: true });
-    } catch (e) {
-      const [result2] = await pool.query(
-        `UPDATE powerbanks SET name = ?, brand = ?, capacity = ?, price = ?, stock = ?, image = ? WHERE id = ?`,
-        [name, brand, capacity, price, stock, image, id]
-      );
-      if (result2.affectedRows === 0) return res.status(404).json({ error: 'Product not found' });
-      return res.json({ success: true });
-    }
-  } catch (err) {
-    console.error('Update Product Error:', err);
-    res.status(500).json({ error: 'Failed to update product: ' + (err.message || 'Unknown error') });
-  }
-});
-
-// ==========================================
-// ⚙️ [BACKEND] 2. ระบบลบสินค้า (DELETE PRODUCT - เฉพาะ Admin)
-// ==========================================
-app.delete('/api/products/:id', requireAdmin, async (req, res) => {
-  try {
-    // 1️ รับค่า id ของสินค้าที่ส่งมากับ URL (เช่น /api/products/5 ก็จะได้ 5)
-    const { id } = req.params;
-
-    // 2️ สั่งรันคำสั่ง SQL เพื่อลบข้อมูลสินค้าตัวนั้นออกจากตาราง powerbanks ไปเลยยย
-    const [result] = await pool.query('DELETE FROM powerbanks WHERE id = ?', [id]);
-
-    // 3️ เช็คว่าลบสำเร็จไหม (affectedRows = จำนวนแถวที่ถูกลบ) ถ้าเป็น 0 แปลว่าหาสินค้าไม่เจอจ้า 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ error: 'Product not found' });
+    // Strict validation: name, position, salary must not be empty
+    if (
+      !name ||
+      typeof name !== 'string' ||
+      name.trim() === '' ||
+      !position ||
+      typeof position !== 'string' ||
+      position.trim() === '' ||
+      salary === undefined ||
+      salary === null ||
+      salary === '' ||
+      isNaN(Number(salary))
+    ) {
+      return res.status(400).json({
+        error: 'Validation Error: name, position, and numeric salary are required and cannot be empty.'
+      });
     }
 
-    // 4️ ถ้าผ่านฉลุย ก็ส่งข้อความบอก Frontend ว่าลบเรียบร้อยแล้ว
-    res.json({ success: true, message: 'Product deleted successfully' });
-  } catch (err) {
-    // 5️ ดักจับ Error เผื่อระบบฐานข้อมูลมีปัญหา จะได้ไม่ทำเซิร์ฟเวอร์พัง แล้วฟ้องกลับไปว่า Error 
-    console.error('Delete Product Error:', err);
-    res.status(500).json({ error: 'Failed to delete product' });
-  }
-});
+    const numSalary = Number(salary);
+    const empStatus = status === 'On Leave' ? 'On Leave' : 'Active';
 
-// ==========================================
-// ⚙️ [BACKEND] 7. ระบบวิเคราะห์ K-MEANS CLUSTERING (STANDALONE / LOCAL DB)
-// ==========================================
-function calculateKMeans(products, k = 3) {
-  if (!products || products.length === 0) {
-    return { totalProducts: 0, k, clusterSummaries: [], clusteredProducts: [], elbowData: [] };
-  }
+    // Generate unique ID
+    const newId = String(Date.now());
 
-  // แปลงข้อมูลจาก DB ของผู้ใช้ 100%
-  const rawItems = products.map(p => ({
-    id: p.id,
-    name: p.name,
-    brand: p.brand || '-',
-    capacity: p.capacity || 0,
-    price: Number(p.price) || 0,
-    stock: Number(p.stock) || 0,
-    image: p.image || ''
-  }));
-
-  // คำนวณขอบเขตราคา Min-Max ของสินค้าใน DB เพื่อจัดกลุ่มสัมพัทธ์ (Relative Quantiles)
-  const rawPrices = rawItems.map(i => i.price);
-  const minPrice = Math.min(...rawPrices);
-  const maxPrice = Math.max(...rawPrices);
-  const priceRange = (maxPrice - minPrice) || 1;
-
-  const items = rawItems.map(p => {
-    // ตำแหน่งราคาใน DB (0.0 = ถูกที่สุดในร้าน, 1.0 = แพงที่สุดในร้าน)
-    const relPrice = (p.price - minPrice) / priceRange;
-    let unitsSold = p.stock;
-
-    // คำนวณยอดขายสัมพัทธ์ตามกฎอุปสงค์ (ราคาถูกที่สุดในร้าน ➔ ขายได้เยอะสุด 95-140)
-    if (!unitsSold || unitsSold <= 15) {
-      if (relPrice <= 0.20) {
-        unitsSold = Math.min(140, Math.max(95, Math.floor(140 - relPrice * 150 + ((p.id * 17) % 20))));
-      } else if (relPrice <= 0.65) {
-        unitsSold = Math.min(90, Math.max(50, Math.floor(90 - (relPrice - 0.20) * 80 + ((p.id * 13) % 20))));
-      } else {
-        unitsSold = Math.min(25, Math.max(10, Math.floor(25 - (relPrice - 0.65) * 35 + ((p.id * 7) % 10))));
-      }
-    }
-
-    return {
-      ...p,
-      unitsSold
+    const newEmployee = {
+      id: newId,
+      name: name.trim(),
+      position: position.trim(),
+      status: empStatus,
+      salary: numSalary
     };
-  });
 
-  const numClusters = Math.min(k, items.length);
+    // Save to DB if connected
+    if (isDbConnected && pool) {
+      try {
+        await pool.query(
+          'INSERT INTO employees (id, name, position, status, salary) VALUES (?, ?, ?, ?, ?)',
+          [newEmployee.id, newEmployee.name, newEmployee.position, newEmployee.status, newEmployee.salary]
+        );
+      } catch (dbErr) {
+        console.error('Failed to insert into DB, saving to in-memory:', dbErr.message);
+      }
+    }
 
-  // Standardization (Z-score Scaling) บน Price และ UnitsSold
-  const prices = items.map(i => i.price);
-  const sales = items.map(i => i.unitsSold);
+    // Always update in-memory list
+    mockEmployees.push(newEmployee);
 
-  const meanPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-  const meanSales = sales.reduce((a, b) => a + b, 0) / sales.length;
+    return res.status(201).json({
+      success: true,
+      employee: newEmployee
+    });
+  } catch (err) {
+    console.error('Add employee error:', err);
+    return res.status(500).json({ error: 'Internal server error while adding employee' });
+  }
+});
 
-  const stdPrice = Math.sqrt(prices.reduce((sq, n) => sq + Math.pow(n - meanPrice, 2), 0) / prices.length) || 1;
-  const stdSales = Math.sqrt(sales.reduce((sq, n) => sq + Math.pow(n - meanSales, 2), 0) / sales.length) || 1;
+/**
+ * [PUT] /api/employees/:id/status
+ * Toggle the employee's status (Active <-> On Leave).
+ */
+app.put('/api/employees/:id/status', async (req, res) => {
+  try {
+    const { id } = req.params;
 
-  const scaledItems = items.map(item => ({
-    ...item,
-    zx: (item.price - meanPrice) / stdPrice,
-    zy: (item.unitsSold - meanSales) / stdSales,
-    cluster: 0
-  }));
+    // Find in memory
+    const empIndex = mockEmployees.findIndex(e => String(e.id) === String(id));
+    if (empIndex === -1 && !isDbConnected) {
+      return res.status(404).json({ error: `Employee with id ${id} not found` });
+    }
 
-  let sortedByPrice = [...scaledItems].sort((a, b) => a.price - b.price);
-  let centroids = [];
-  for (let i = 0; i < numClusters; i++) {
-    const idx = Math.floor((i + 0.5) * (sortedByPrice.length / numClusters));
-    centroids.push({ zx: sortedByPrice[idx].zx, zy: sortedByPrice[idx].zy });
+    let currentStatus = 'Active';
+    if (empIndex !== -1) {
+      currentStatus = mockEmployees[empIndex].status;
+    } else if (isDbConnected && pool) {
+      const [rows] = await pool.query('SELECT status FROM employees WHERE id = ?', [id]);
+      if (rows.length === 0) {
+        return res.status(404).json({ error: `Employee with id ${id} not found` });
+      }
+      currentStatus = rows[0].status;
+    }
+
+    // Toggle status
+    const newStatus = currentStatus === 'Active' ? 'On Leave' : 'Active';
+
+    if (empIndex !== -1) {
+      mockEmployees[empIndex].status = newStatus;
+    }
+
+    if (isDbConnected && pool) {
+      try {
+        await pool.query('UPDATE employees SET status = ? WHERE id = ?', [newStatus, id]);
+      } catch (dbErr) {
+        console.error('Failed to update status in DB:', dbErr.message);
+      }
+    }
+
+    const updatedEmp = empIndex !== -1
+      ? mockEmployees[empIndex]
+      : { id, status: newStatus };
+
+    return res.status(200).json({
+      success: true,
+      employee: updatedEmp
+    });
+  } catch (err) {
+    console.error('Toggle status error:', err);
+    return res.status(500).json({ error: 'Internal server error while toggling status' });
+  }
+});
+
+/**
+ * [PUT] /api/employees/:id
+ * Edit employee record (name, position, salary, status)
+ */
+app.put('/api/employees/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, position, salary, status } = req.body || {};
+
+    const empIndex = mockEmployees.findIndex(e => String(e.id) === String(id));
+    if (empIndex === -1 && !isDbConnected) {
+      return res.status(404).json({ error: `Employee with id ${id} not found` });
+    }
+
+    const currentEmp = empIndex !== -1 ? mockEmployees[empIndex] : null;
+
+    const updatedName = (name !== undefined && name !== null) ? String(name).trim() : (currentEmp?.name || '');
+    const updatedPos = (position !== undefined && position !== null) ? String(position).trim() : (currentEmp?.position || '');
+    const updatedSal = (salary !== undefined && salary !== null && !isNaN(Number(salary))) ? Number(salary) : (currentEmp?.salary || 0);
+    const updatedStatus = status ? (status === 'On Leave' ? 'On Leave' : 'Active') : (currentEmp?.status || 'Active');
+
+    if (!updatedName || !updatedPos || isNaN(updatedSal)) {
+      return res.status(400).json({ error: 'Validation Error: name, position, and salary cannot be empty' });
+    }
+
+    const updatedEmployee = {
+      id: String(id),
+      name: updatedName,
+      position: updatedPos,
+      status: updatedStatus,
+      salary: updatedSal
+    };
+
+    if (empIndex !== -1) {
+      mockEmployees[empIndex] = updatedEmployee;
+    }
+
+    if (isDbConnected && pool) {
+      try {
+        await pool.query(
+          'UPDATE employees SET name = ?, position = ?, status = ?, salary = ? WHERE id = ?',
+          [updatedName, updatedPos, updatedStatus, updatedSal, id]
+        );
+      } catch (dbErr) {
+        console.error('Failed to update employee in DB:', dbErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      employee: updatedEmployee
+    });
+  } catch (err) {
+    console.error('Edit employee error:', err);
+    return res.status(500).json({ error: 'Internal server error while editing employee' });
+  }
+});
+
+/**
+ * [DELETE] /api/employees/:id
+ * Remove the employee from the system.
+ */
+app.delete('/api/employees/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const empIndex = mockEmployees.findIndex(e => String(e.id) === String(id));
+    if (empIndex === -1 && !isDbConnected) {
+      return res.status(404).json({ error: `Employee with id ${id} not found` });
+    }
+
+    if (empIndex !== -1) {
+      mockEmployees.splice(empIndex, 1);
+    }
+
+    if (isDbConnected && pool) {
+      try {
+        const [result] = await pool.query('DELETE FROM employees WHERE id = ?', [id]);
+        if (result.affectedRows === 0 && empIndex === -1) {
+          return res.status(404).json({ error: `Employee with id ${id} not found` });
+        }
+      } catch (dbErr) {
+        console.error('Failed to delete from DB:', dbErr.message);
+      }
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Employee with id ${id} removed successfully.`
+    });
+  } catch (err) {
+    console.error('Delete employee error:', err);
+    return res.status(500).json({ error: 'Internal server error while deleting employee' });
+  }
+});
+
+// ==============================================================================
+// 🧠 Phase 2: Automated Salary Clustering (1D K-Means Analytics, k=3)
+// ==============================================================================
+
+/**
+ * 1D K-Means Clustering Algorithm
+ * @param {number[]} salaries - Array of numeric salaries
+ * @param {number} k - Number of clusters (k=3)
+ * @returns {Array<{ group: string, centroid: number, count: number, minSalary?: number, maxSalary?: number }>}
+ */
+function run1DKMeans(salaries, k = 3) {
+  if (!salaries || salaries.length === 0) {
+    return [
+      { group: 'Tier 1', centroid: 0, count: 0 },
+      { group: 'Tier 2', centroid: 0, count: 0 },
+      { group: 'Tier 3', centroid: 0, count: 0 }
+    ];
   }
 
-  for (let iter = 0; iter < 30; iter++) {
-    scaledItems.forEach(item => {
-      let minDist = Infinity;
-      let closestCluster = 0;
-      centroids.forEach((c, cIdx) => {
-        const dist = Math.pow(item.zx - c.zx, 2) + Math.pow(item.zy - c.zy, 2);
-        if (dist < minDist) {
-          minDist = dist;
-          closestCluster = cIdx;
-        }
-      });
-      item.cluster = closestCluster;
-    });
+  // Edge case: if fewer employees than k, duplicate or assign naturally
+  const sorted = [...salaries].sort((a, b) => a - b);
+  const n = sorted.length;
 
-    let newCentroids = centroids.map(() => ({ sumX: 0, sumY: 0, count: 0 }));
-    scaledItems.forEach(item => {
-      newCentroids[item.cluster].sumX += item.zx;
-      newCentroids[item.cluster].sumY += item.zy;
-      newCentroids[item.cluster].count += 1;
-    });
+  // Initialize centroids spread across the distribution (quantile-based initialization)
+  let centroids = [];
+  for (let i = 0; i < k; i++) {
+    const quantileIndex = Math.min(n - 1, Math.floor(((i + 0.5) / k) * n));
+    centroids.push(sorted[quantileIndex]);
+  }
 
+  // Iterate K-Means
+  const maxIterations = 35;
+  let assignments = new Array(n).fill(0);
+
+  for (let iter = 0; iter < maxIterations; iter++) {
     let changed = false;
-    newCentroids.forEach((nc, cIdx) => {
-      if (nc.count > 0) {
-        const newZx = nc.sumX / nc.count;
-        const newZy = nc.sumY / nc.count;
-        if (Math.abs(newZx - centroids[cIdx].zx) > 0.0001 || Math.abs(newZy - centroids[cIdx].zy) > 0.0001) {
-          centroids[cIdx].zx = newZx;
-          centroids[cIdx].zy = newZy;
-          changed = true;
+
+    // Assignment Step: Assign each salary to nearest centroid
+    for (let i = 0; i < n; i++) {
+      const val = sorted[i];
+      let minDistance = Infinity;
+      let bestCluster = 0;
+
+      for (let c = 0; c < k; c++) {
+        const dist = Math.abs(val - centroids[c]);
+        if (dist < minDistance) {
+          minDistance = dist;
+          bestCluster = c;
         }
       }
+
+      if (assignments[i] !== bestCluster) {
+        assignments[i] = bestCluster;
+        changed = true;
+      }
+    }
+
+    // Update Step: Compute new centroid for each cluster
+    const newCentroids = [];
+    for (let c = 0; c < k; c++) {
+      const clusterMembers = sorted.filter((_, idx) => assignments[idx] === c);
+      if (clusterMembers.length > 0) {
+        const sum = clusterMembers.reduce((acc, curr) => acc + curr, 0);
+        newCentroids.push(sum / clusterMembers.length);
+      } else {
+        // Handle empty cluster: fallback to previous centroid
+        newCentroids.push(centroids[c]);
+      }
+    }
+
+    // Check convergence
+    let diff = 0;
+    for (let c = 0; c < k; c++) {
+      diff += Math.abs(newCentroids[c] - centroids[c]);
+    }
+    centroids = newCentroids;
+
+    if (!changed || diff < 0.01) {
+      break;
+    }
+  }
+
+  // Build cluster results and sort by centroid ascending (Tier 1 = lower, Tier 2 = mid, Tier 3 = high)
+  const clusterData = [];
+  for (let c = 0; c < k; c++) {
+    const clusterMembers = sorted.filter((_, idx) => assignments[idx] === c);
+    const count = clusterMembers.length;
+    const centroid = count > 0
+      ? Math.round(clusterMembers.reduce((acc, curr) => acc + curr, 0) / count)
+      : Math.round(centroids[c]);
+
+    const minSal = count > 0 ? Math.min(...clusterMembers) : centroid;
+    const maxSal = count > 0 ? Math.max(...clusterMembers) : centroid;
+
+    clusterData.push({
+      tempCentroid: centroid,
+      count,
+      minSalary: minSal,
+      maxSalary: maxSal,
+      salaries: clusterMembers
     });
-
-    if (!changed) break;
   }
 
-  // เรียงลำดับ Cluster ตามราคาเฉลี่ยจากน้อยไปมาก (0 = budget, 1 = mid-range, 2 = premium)
-  const clusterAvgPrices = centroids.map((_, cIdx) => {
-    const cItems = scaledItems.filter(i => i.cluster === cIdx);
-    const avgP = cItems.length ? cItems.reduce((s, i) => s + i.price, 0) / cItems.length : 0;
-    return { oldIndex: cIdx, avgP };
-  });
+  // Sort clusters by centroid from low to high
+  clusterData.sort((a, b) => a.tempCentroid - b.tempCentroid);
 
-  clusterAvgPrices.sort((a, b) => a.avgP - b.avgP);
-
-  const clusterMapping = {};
-  clusterAvgPrices.forEach((c, newIdx) => {
-    clusterMapping[c.oldIndex] = newIdx;
-  });
-
-  scaledItems.forEach(item => {
-    item.cluster = clusterMapping[item.cluster];
-  });
-
-  const clusterMeta = [
-    {
-      name: 'Cluster 0 (budget)',
-      shortName: 'budget',
-      profile: 'Cheap products, fast-moving, high turnover',
-      salesBehavior: 'ราคาถูก ➔ ซื้อเยอะ (High Sales ~115 units)',
-      color: '#3B82F6'
-    },
-    {
-      name: 'Cluster 1 (mid-range)',
-      shortName: 'mid-range',
-      profile: 'Mid-range products, steady sales',
-      salesBehavior: 'ราคากลาง ➔ ซื้อปานกลาง (Steady Sales ~66 units)',
-      color: '#F97316'
-    },
-    {
-      name: 'Cluster 2 (premium)',
-      shortName: 'premium',
-      profile: 'Premium products, high price, low volume',
-      salesBehavior: 'ราคาแพง ➔ ซื้อน้อย (Low Sales ~18 units)',
-      color: '#10B981'
-    }
-  ];
-
-  const clusterSummaries = [];
-  for (let c = 0; c < numClusters; c++) {
-    const cItems = scaledItems.filter(i => i.cluster === c);
-    const meta = clusterMeta[c] || { name: `Cluster ${c}`, profile: `Cluster ${c}`, salesBehavior: '-', color: '#8B5CF6' };
-
-    if (cItems.length > 0) {
-      const minP = Math.min(...cItems.map(i => i.price));
-      const maxP = Math.max(...cItems.map(i => i.price));
-      const avgP = Math.round(cItems.reduce((s, i) => s + i.price, 0) / cItems.length);
-      const avgSales = Math.round(cItems.reduce((s, i) => s + i.unitsSold, 0) / cItems.length);
-
-      clusterSummaries.push({
-        cluster: c,
-        name: meta.name,
-        priceRange: minP === maxP ? `${minP}` : `${minP} - ${maxP}`,
-        avgPrice: avgP,
-        avgSales: avgSales,
-        count: cItems.length,
-        profile: meta.profile,
-        salesBehavior: meta.salesBehavior,
-        color: meta.color
-      });
-    } else {
-      clusterSummaries.push({
-        cluster: c,
-        name: meta.name,
-        priceRange: 'N/A',
-        avgPrice: 0,
-        avgSales: 0,
-        count: 0,
-        profile: meta.profile,
-        salesBehavior: meta.salesBehavior,
-        color: meta.color
-      });
-    }
-  }
-
-  const elbowData = [];
-  for (let testK = 1; testK <= Math.min(5, scaledItems.length); testK++) {
-    let sumInertia = 0;
-    let testCentroids = [];
-    for (let i = 0; i < testK; i++) {
-      const idx = Math.floor((i + 0.5) * (sortedByPrice.length / testK));
-      testCentroids.push({ zx: sortedByPrice[idx].zx, zy: sortedByPrice[idx].zy });
-    }
-    scaledItems.forEach(item => {
-      let minDist = Infinity;
-      testCentroids.forEach(c => {
-        const d = Math.pow(item.zx - c.zx, 2) + Math.pow(item.zy - c.zy, 2);
-        if (d < minDist) minDist = d;
-      });
-      sumInertia += minDist;
-    });
-    elbowData.push({ k: testK, inertia: Number(sumInertia.toFixed(2)) });
-  }
-
-  const clusteredProducts = scaledItems.map(item => ({
-    id: item.id,
-    name: item.name,
-    brand: item.brand,
-    capacity: item.capacity,
-    price: item.price,
-    stock: item.stock,
-    unitsSold: item.unitsSold,
-    image: item.image,
-    cluster: item.cluster,
-    clusterName: clusterSummaries[item.cluster]?.name || `Cluster ${item.cluster}`,
-    salesBehavior: clusterSummaries[item.cluster]?.salesBehavior || '-',
-    color: clusterSummaries[item.cluster]?.color || '#3B82F6'
+  // Map to the required JSON schema
+  return clusterData.map((item, index) => ({
+    group: `Tier ${index + 1}`,
+    centroid: item.tempCentroid,
+    count: item.count,
+    minSalary: item.minSalary,
+    maxSalary: item.maxSalary
   }));
-
-  return {
-    totalProducts: items.length,
-    k: numClusters,
-    clusterSummaries,
-    clusteredProducts,
-    elbowData
-  };
 }
 
-app.get('/api/analytics/kmeans', async (req, res) => {
+/**
+ * [GET] /api/employees/salary-clusters
+ * Objective: Group company salary structure into 3 distinct tiers using 1D K-Means.
+ * Response Format:
+ * {
+ *   "success": true,
+ *   "clusters": [
+ *     { "group": "Tier 1", "centroid": 18500, "count": 5 },
+ *     { "group": "Tier 2", "centroid": 45000, "count": 3 },
+ *     { "group": "Tier 3", "centroid": 85000, "count": 2 }
+ *   ]
+ * }
+ */
+app.get('/api/employees/salary-clusters', async (req, res) => {
   try {
-    const k = parseInt(req.query.k) || 3;
-    const [rows] = await pool.query('SELECT * FROM powerbanks');
-    const result = calculateKMeans(rows, k);
-    res.json(result);
+    const employees = await getAllEmployees();
+
+    // Extract only salary values
+    const salaries = employees
+      .map(e => Number(e.salary))
+      .filter(s => !isNaN(s) && s > 0);
+
+    const clusters = run1DKMeans(salaries, 3);
+
+    return res.status(200).json({
+      success: true,
+      clusters
+    });
   } catch (err) {
-    console.error('K-Means Analytics Error:', err);
-    res.status(500).json({ error: 'Failed to calculate K-Means clustering' });
+    console.error('K-Means clustering error:', err);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to calculate salary clusters'
+    });
   }
 });
 
+// Root API Health Check
+app.get('/api', (req, res) => {
+  res.json({
+    message: 'HR Manager & Salary Analytics API is online',
+    version: '1.0.0',
+    mode: isDbConnected ? 'MySQL Connected' : 'In-Memory Array'
+  });
+});
+
+// Start Express Server
 app.listen(port, '0.0.0.0', () => {
-  console.log(`🚀 API running on port ${port}`);
+  console.log(`🚀 HR Manager Backend running on http://localhost:${port}`);
+  console.log(`📌 Authentication: POST /api/login`);
+  console.log(`📌 CRUD API: /api/employees`);
+  console.log(`📌 K-Means ML API: GET /api/employees/salary-clusters`);
 });
-
-app.get("/api", (req, res) => {
-  res.send("API is running");
-});
-

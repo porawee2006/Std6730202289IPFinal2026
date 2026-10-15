@@ -6,9 +6,10 @@ import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert } from 'reac
 import { useRouter } from 'expo-router';
 // นำเข้า SafeAreaView ช่วยจัดการขอบหน้าจอ
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { API_BASE_URL } from '../constants/api';
 
 // ===================================================
-// 🖥️ [FRONTEND] 5. หน้า REGISTER (สมัครสมาชิกลูกค้า - TECH THEME)
+// 🖥️ [FRONTEND] 5. หน้า REGISTER (สมัครสมาชิก - TECH THEME)
 // ===================================================
 export default function RegisterScreen() {
   const [username, setUsername] = useState('');
@@ -25,7 +26,7 @@ export default function RegisterScreen() {
 
     setIsLoading(true);
     try {
-      const response = await fetch('http://119.59.102.161:3028/api/auth/register', {
+      const response = await fetch(`${API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -10,9 +10,10 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // รูปแบบข้อมูลผู้ใช้งานที่ล็อกอินเข้ามา
 export type User = {
-  id: number;
+  id: number | string;
   username: string;
-  role: 'admin' | 'user'; // สิทธิ์ใช้งาน: admin หรือ user (ลูกค้า)
+  role: 'admin' | 'user' | string;
+  name?: string;
 };
 
 // รูปแบบการทำงานใน Context
